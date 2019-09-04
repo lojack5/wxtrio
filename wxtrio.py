@@ -56,7 +56,12 @@ class App(wx.App):
         # tasks that are queued to be launched, but could not be because trio was
         # not yet started at the time
         self.pending_tasks = []
+        # wxPython calls 'ExitMainLoop' to signal that App needs to terminate, track it
+        self.exiting = False
         super(App, self).__init__(*args, **kwargs)
+
+    def ExitMainLoop(self):
+        self.exiting = True
 
     def MainLoop(self, bootstrap_trio=True):
         """Start the main wx app event loop asyncronously.  If boostrap_trio
@@ -93,7 +98,7 @@ class App(wx.App):
         # 3) Execute wx main event loop
         wx_loop = wx.GUIEventLoop()
         with wx.EventLoopActivator(wx_loop):
-            while True:
+            while not self.exiting:
                 while wx_loop.Pending():
                     wx_loop.Dispatch()
                 # yield to other trio tasks
@@ -195,7 +200,7 @@ async def AsyncShowDialog(dialog):
         dialog.SetReturnCode(return_code)
         dialog.Hide()
         closed.set()
-    async def on_button(event):
+    def on_button(event):
         # Logic copied from src/common/dlgcmn.cpp:
         # wxDialogBase::OnButton, EndDialog, and AcceptAndClose
         event_id = event.GetId()
@@ -205,15 +210,15 @@ async def AsyncShowDialog(dialog):
         elif event_id == wx.ID_APPLY:
             if dialog.Validate():
                 dialog.TransferDataFromWindow()
-        elif event_id == dialog.GetEscapeId() or (id == wx.ID_CANCEL and dialog.GetEscapeId() == wx.ID_ANY):
+        elif event_id == dialog.GetEscapeId() or (event_id == wx.ID_CANCEL and dialog.GetEscapeId() == wx.ID_ANY):
             end_dialog(wx.ID_CANCEL)
         else:
             event.Skip()
-    async def on_close(event):
+    def on_close(event):
         closed.set()
         dialog.Hide()
-    AsyncBind(wx.EVT_CLOSE, on_close, dialog)
-    AsyncBind(wx.EVT_BUTTON, on_button, dialog)
+    dialog.Bind(wx.EVT_CLOSE, on_close)
+    dialog.Bind(wx.EVT_BUTTON, on_button)
     dialog.Show()
     await closed.wait()
     return dialog.GetReturnCode()
