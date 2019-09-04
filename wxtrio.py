@@ -93,12 +93,13 @@ class App(wx.App):
         # 3) Execute wx main event loop
         wx_loop = wx.GUIEventLoop()
         with wx.EventLoopActivator(wx_loop):
-            while wx_loop.Pending():
-                wx_loop.Dispatch()
-            # yield to other trio tasks
-            await trio.sleep(WX_TRIO_WAIT_INTERVAL)
-            self.ProcessPendingEvents()
-            wx_loop.ProcessIdle()
+            while True:
+                while wx_loop.Pending():
+                    wx_loop.Dispatch()
+                # yield to other trio tasks
+                await trio.sleep(WX_TRIO_WAIT_INTERVAL)
+                self.ProcessPendingEvents()
+                wx_loop.ProcessIdle()
 
     def AsyncBind(self, wx_event_binder, async_handler, wx_window, source=None, id=wx.ID_ANY, id2=wx.ID_ANY):
         """Bind a coroutine as a wx Event callback on the given wx_window.
