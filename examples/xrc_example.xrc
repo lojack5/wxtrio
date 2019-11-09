@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resource>
+	<object class="wxFrame" name="TestFrame">
+		<title>Test wxTrio Application</title>
+		<centered>1</centered>
+		<style></style>
+		<object class="wxPanel" name="panel">
+			<object class="wxBoxSizer">
+				<orient>wxVERTICAL</orient>
+				<object class="sizeritem">
+					<option>1</option>
+					<flag>wxALL|wxALIGN_CENTER</flag>
+					<border>5</border>
+					<object class="wxButton" name="button">
+						<label>Submit</label>
+					</object>
+				</object>
+				<object class="spacer">
+					<option>1</option>
+					<flag>wxEXPAND</flag>
+				</object>
+				<object class="sizeritem">
+					<option>1</option>
+					<flag>wxEXPAND|wxALL</flag>
+					<border>5</border>
+					<object class="wxStaticText" name="edit">
+						<style>wxALIGN_CENTRE_HORIZONTAL|wxST_NO_AUTORESIZE</style>
+					</object>
+				</object>
+				<object class="sizeritem">
+					<option>1</option>
+					<flag>wxEXPAND|wxALL</flag>
+					<border>5</border>
+					<object class="wxStaticText" name="edit_timer">
+						<style>wxALIGN_CENTER_HORIZONTAL|wxST_NO_AUTORESIZE</style>
+					</object>
+				</object>
+			</object>
+		</object>
+	</object>
+</resource>
