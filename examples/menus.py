@@ -24,7 +24,7 @@ class TestFrame(wx.Frame):
 
         # Layout
         vbox = wx.BoxSizer(wx.VERTICAL)
-        vbox.Add(self.edit_timer, 1, wx.EXPAND|wx.ALL|wx.ALIGN_CENTER, 5)
+        vbox.Add(self.edit_timer, 1, wx.EXPAND|wx.ALL, 5)
         panel.SetSizer(vbox)
         panel.Layout()
 
