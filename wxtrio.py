@@ -1,16 +1,13 @@
-"""Initial implementation of wxPython's event loop on trio.
-   This entry point is a drop in replacement for wx.App: wxtrio.App
+"""Implementation allowing wxPython to use async functions via trio.
+   This is done by running trio in guest mode under wxPython.  The
+   details are handled by wxtrio.App, a repleacement for wx.App
    
-   The constructor for App optionally accepts a nursery from trio,
-   to allow for the user to start their own trio context, and run
-   wxPython until a nursery they specify.  If no nursery is provided,
-   then App will start trio upon execution of MainLoop.
-   
-   In either case, MainLoop is the main entry point into the wxPython
-   application, just as in synchronous wxPython.
-   
-   Finally, helper async functions are provided:
+   Additionally, async window even handlers can now be bound to window
+   events.  All of this is handled automatically via monkey patching the
+   wx.Window.Bind method.  Finally, helper async functions are provided:
     - AsyncBind: a version of wx.Bind that accepts async functions for callbacks
+    - DynamicBind: a version of wx.Bind that automatically determines whether to use the
+          syncronous or asyncronous version.  This is what wx.Window.Bind has been replace with.
     - AsyncShowDialog: a version of wx.ShowDialog that processes a non-modal dialog asynchronously
     - StartCoroutine: launches a async function, tieing it to a wx window object.
     In the case of both AsyncBind and StartCoroutine, the async task will automatically be
@@ -23,17 +20,12 @@ import wx
 import trio
 import attr
 
-
-# TODO: deal with MacOS?
-WX_TRIO_WAIT_INTERVAL = 0.005
-
-
 # Commonly used trio core functionality
 from trio import sleep
 
 
 # Save original Bind method
-_WindowBind = wx.Window.Bind
+_BindSync = wx.Window.Bind
 
 
 @attr.s(slots=True)
@@ -52,21 +44,17 @@ class WindowBindingData:
 
 
 class App(wx.App):
-    def __init__(self, nursery=None, *args, **kwargs):
-        # nursery the App is running under.  Used to launch non-window specific tasks
-        self.nursery = nursery
-        # event handler and task data for each window object
+    def __init__(self, *args, done_callback=None, **kwargs):
+        # TODO: implement non-guest mode option?
+        self.nursery = None
+        self.done_callback = done_callback
         self.window_bindings = defaultdict(WindowBindingData)
-        # tasks that are queued to launc, because trio is not started yet
         self.pending_tasks = []
-        # wxPython calls 'ExitMainLoop' to signal that App needs to terminate, track it
-        self.exiting = False
-        # Monkey patch the wx Bind functions
         self._patch_bind()
-        super(App, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def _patch_bind(self):
-        if wx.Window.Bind == _WindowBind:
+        if wx.Window.Bind == _BindSync:
             def _bind(wx_window, wx_event_binder, handler, source=None, id=wx.ID_ANY, id2=wx.ID_ANY):
                 self.DynamicBind(wx_window, wx_event_binder, handler, source, id, id2)
             wx.Window.Bind = _bind
@@ -75,50 +63,37 @@ class App(wx.App):
 
     def ExitMainLoop(self):
         """Called internally by wxPython to signal that the main application should exit."""
-        self.exiting = True
-
-    def MainLoop(self):
-        """Start the main wx app event loop asyncronously.  If boostrap_trio
-           is true and no nursery was provided in the constructor, this will
-           start trio's main task as well.
-        """
-        if self.nursery is None:
-            trio.run(self._trio_main)
-        else:
-            self.nursery.start_soon(self._main_loop)
+        self.nursery.cancel_scope.cancel()
+        super().ExitMainLoop()
 
     def OnInit(self):
-        # This is supposed to be defaulted to True already, but
-        # for some reason is False without this call
-        self.SetExitOnFrameDelete(True)
+        # Start trio in guest mode
+        if self.done_callback:
+            done_callback = self.done_callback
+        else:
+            def done_callback(trio_outcome):
+                pass
+        trio.lowlevel.start_guest_run(
+            self._trio_main,
+            run_sync_soon_threadsafe=wx.CallAfter,
+            done_callback=done_callback,
+        )
         return True
 
     async def _trio_main(self):
         # Start trio, then begin the app's main loop
         async with trio.open_nursery() as nursery:
+            # 1) Create the main trio nursery
             self.nursery = nursery
-            nursery.start_soon(self._main_loop)
-
-    async def _main_loop(self):
-        """Asyncronous version of the wx event loop."""
-        # 1) Create any nurseries needed to track tasks associated with wx_windows
-        for wx_window in self.window_bindings:
-            if self.window_bindings[wx_window].nursery is None:
+            # 2) Create nurseries for each window for long running tasks
+            for wx_window in self.window_bindings:
                 self.nursery.start_soon(self._build_nursery, wx_window)
-        # 2) Start any pending coroutines
-        for wx_window, coroutine in self.pending_tasks:
-            self.nursery.start_soon(self._spawn_into, wx_window, coroutine)
-        self.pending_tasks = None # Set to none, so any further appends will raise an exception
-        # 3) Execute wx main event loop
-        wx_loop = wx.GUIEventLoop()
-        with wx.EventLoopActivator(wx_loop):
-            while not self.exiting:
-                while wx_loop.Pending():
-                    wx_loop.Dispatch()
-                # yield to other trio tasks
-                await trio.sleep(WX_TRIO_WAIT_INTERVAL)
-                self.ProcessPendingEvents()
-                wx_loop.ProcessIdle()
+            # 3) Start any pending tasks
+            for wx_window, coroutine in self.pending_tasks:
+                self.nursery.start_soon(self._spawn_into, wx_window, coroutine)
+            self.pending_tasks = None
+            # Wait until the application exits
+            await trio.sleep_forever()
 
     def DynamicBind(self, wx_window, wx_event_binder, handler, source=None, id=wx.ID_ANY, id2=wx.ID_ANY):
         """Binds an event handler to a wx Event callback.  Automatically detects if the handler
@@ -128,7 +103,7 @@ class App(wx.App):
             # 'async def' function that has not been called
             self._queue_cleanup(wx_window)
             self.window_bindings[wx_window].event_handlers[wx_event_binder.typeId].append(handler)
-            _WindowBind(wx_window, wx_event_binder, lambda event: self.OnEvent(event, wx_window, wx_event_binder.typeId), source=source, id=id, id2=id2)
+            _BindSync(wx_window, wx_event_binder, lambda event: self.OnEvent(event, wx_window, wx_event_binder.typeId), source=source, id=id, id2=id2)
         elif inspect.iscoroutine(handler):
             # 'async def' function that has been called and returned an awaitable object
             raise TypeError('Event handler is an awaitable object returned from an async function.  Do not call the async function.')
@@ -139,7 +114,7 @@ class App(wx.App):
             raise TypeError('Event handler is not callable.')
         else:
             # Sync event handler
-            _WindowBind(wx_window, wx_event_binder, handler, source=source, id=id, id2=id2)
+            _BindSync(wx_window, wx_event_binder, handler, source=source, id=id, id2=id2)
 
     def AsyncBind(self, wx_event_binder, async_handler, wx_window, source=None, id=wx.ID_ANY, id2=wx.ID_ANY):
         """Bind a coroutine as a wx Event callback on the given wx_window.
@@ -155,12 +130,12 @@ class App(wx.App):
             raise TypeError('async_handler must be a async function or coroutine.')
         self._queue_cleanup(wx_window)
         self.window_bindings[wx_window].event_handlers[wx_event_binder.typeId].append(async_handler)
-        _WindowBind(wx_window, wx_event_binder, lambda event: self.OnEvent(event, wx_window, wx_event_binder.typeId), source=source, id=id, id2=id2)
+        _BindSync(wx_window, wx_event_binder, lambda event: self.OnEvent(event, wx_window, wx_event_binder.typeId), source=source, id=id, id2=id2)
 
     def _queue_cleanup(self, wx_window):
         bindings = self.window_bindings[wx_window]
-        # If there is no main nursery yet, the remainder of this will be handled
-        # in _main_loop upon startup
+        # If ther is a main nursery already, build a nursery for this window,
+        # otherwise, the nurseries will be created in _trio_main
         if self.nursery is not None and bindings.nursery is None and not bindings.nursery_queued:
             # Need to create a nursery for this wx_window
             bindings.nursery_queued = True
@@ -175,7 +150,7 @@ class App(wx.App):
         async with trio.open_nursery() as nursery:
             bindings = self.window_bindings[wx_window]
             bindings.nursery = nursery
-            _WindowBind(wx_window, wx.EVT_WINDOW_DESTROY, lambda event: self.OnDestroy(event, wx_window), wx_window)
+            _BindSync(wx_window, wx.EVT_WINDOW_DESTROY, lambda event: self.OnDestroy(event, wx_window), wx_window)
             await trio.sleep_forever()
         del self.window_bindings[wx_window]
 
