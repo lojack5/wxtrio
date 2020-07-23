@@ -28,17 +28,17 @@ from trio import sleep
 _BindSync = wx.Window.Bind
 
 
+SPAWN_TIMEOUT = 1   # Timeout to wait for a nursery when spawning a child task
+
+
 @attr.s(slots=True)
 class WindowBindingData:
-    # List of events this window is subscribed to asyncronously
-    event_handlers = attr.ib(default=defaultdict(list))
-    # Nursery for launching new tasks/event handlers for this window
-    nursery = attr.ib(default=None)
-    # Set to true when the nursery object creation has be queued
-    nursery_queued = attr.ib(default=False)
+    event_handlers = attr.ib(default=defaultdict(list)) # List of event handlers this window is async subscribed to
+    nursery = attr.ib(default=None) # nursury for launching tasks/event handler instances for this window
+    nursery_queued = attr.ib(default=False) # `True` when this window's nursury has be queued for creation
 
-    # Wait until the nursery object has been created
     async def wait_nursery(self):
+        """Wait until this windows's nursury object is created."""
         while self.nursery is None:
             await trio.sleep(0.1)
 
@@ -74,6 +74,7 @@ class App(wx.App):
         super().ExitMainLoop()
 
     def OnInit(self):
+        """Called by wxPython once it is in a state ready to begin the main loop."""
         # Start trio in guest mode
         if self.done_callback:
             done_callback = self.done_callback
@@ -88,7 +89,11 @@ class App(wx.App):
         return True
 
     async def _trio_main(self):
-        # Start trio, then begin the app's main loop
+        """Main async function to run under trio.  Simply creates
+           needed nursuries to house upcoming async tasks, then
+           waits forever, until cancelled when the wx.App gets
+           shutdown.
+        """
         async with trio.open_nursery() as nursery:
             # 1) Create the main trio nursery
             self.nursery = nursery
@@ -140,36 +145,40 @@ class App(wx.App):
         _BindSync(wx_window, wx_event_binder, lambda event: self.OnEvent(event, wx_window, wx_event_binder.typeId), source=source, id=id, id2=id2)
 
     def _queue_cleanup(self, wx_window):
+        """By 'cleanup' we mean: establish a nursery for this window that can then be
+           cancelled when the window gets destroyed, cleaning up any associated tasks.
+        """
         bindings = self.window_bindings[wx_window]
-        # If ther is a main nursery already, build a nursery for this window,
-        # otherwise, the nurseries will be created in _trio_main
+        # If a nursery does not yet exist for this window:
+        #  - If there is a main nursery, launch a task to create a sub-nursery for our window
+        #  - If not, wait until the main loops starts, nurseries will be created then
         if self.nursery is not None and bindings.nursery is None and not bindings.nursery_queued:
-            # Need to create a nursery for this wx_window
             bindings.nursery_queued = True
             self.nursery.start_soon(self._build_nursery, wx_window)
 
     async def _build_nursery(self, wx_window):
         """Create a nursery for managing tasks associated with the wx_window object."""
-        # Check to make sure this isnt already set up
         if self.window_bindings[wx_window].nursery is not None:
-            print('Warning: attempt to recreate nursery for', wx_window)
-            return
+            # Trying to create a nursery twice is a code smell
+            raise Warning(f'Attempted to create nursery for {wx_window} multiple times.')
         async with trio.open_nursery() as nursery:
             bindings = self.window_bindings[wx_window]
             bindings.nursery = nursery
             _BindSync(wx_window, wx.EVT_WINDOW_DESTROY, lambda event: self.OnDestroy(event, wx_window), wx_window)
             await trio.sleep_forever()
+        # We reach here when the nursery has been cancelled, ie: when OnDestroy is
+        # triggered for this window.
         del self.window_bindings[wx_window]
 
     async def _spawn_into(self, wx_window, coroutine):
         """Spawn the child coroutine into the nursery associated with the wx_window."""
-        with trio.move_on_after(10) as cancel_scope:
+        with trio.move_on_after(SPAWN_TIMEOUT) as cancel_scope:
             # The wx_window's nursery may not be set up fully yet,
             # _build_nursery was queued in trio, but might not have begun to run,
             # so wait up to 10 seconds.
             await self.window_bindings[wx_window].wait_nursery()
         if cancel_scope.cancelled_caught:
-            raise RuntimeError('Failed to create cancel scope, timed out.')
+            raise RuntimeError(f'Failed to nursery for {wx_window}, timed out.')
         self.window_bindings[wx_window].nursery.start_soon(coroutine)
 
 
@@ -184,6 +193,9 @@ class App(wx.App):
             self.nursery.start_soon(self._spawn_into, wx_window, coroutine)
 
     def OnEvent(self, wx_event, wx_window, wx_event_id):
+        """An event occurred for something we've bound to an async event
+           handler.
+        """
         bindings = self.window_bindings[wx_window]
         for async_handler in bindings.event_handlers[wx_event_id]:
             bindings.nursery.start_soon(async_handler, wx_event.Clone())
