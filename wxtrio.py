@@ -50,14 +50,21 @@ class App(wx.App):
         self.done_callback = done_callback
         self.window_bindings = defaultdict(WindowBindingData)
         self.pending_tasks = []
-        self._patch_bind()
+        self._patch_window()
         super().__init__(*args, **kwargs)
 
-    def _patch_bind(self):
+    def _patch_window(self):
+        """Monkey patch wx.Window to have our desired version of methods.
+               wx.Window.Bind -> wxtrio.App.DynamicBind
+               wx.Window.StartCoroutine -> added method
+        """
         if wx.Window.Bind == _BindSync:
             def _bind(wx_window, wx_event_binder, handler, source=None, id=wx.ID_ANY, id2=wx.ID_ANY):
                 self.DynamicBind(wx_window, wx_event_binder, handler, source, id, id2)
             wx.Window.Bind = _bind
+            def _start(wx_window, coroutine):
+                self.StartCoroutine(wx_window, coroutine)
+            wx.Window.StartCoroutine = _start
         else:
             raise Warning('Attempt to patch wx.Window.Bind multiple times.')
 
@@ -166,7 +173,7 @@ class App(wx.App):
         self.window_bindings[wx_window].nursery.start_soon(coroutine)
 
 
-    def StartCoroutine(self, coroutine, wx_window):
+    def StartCoroutine(self, wx_window, coroutine):
         """Start a coroutine, and attach its lifetime to the wx_window."""
         self._queue_cleanup(wx_window)
         if self.nursery is None:
@@ -191,6 +198,9 @@ class App(wx.App):
 
 
 def Bind(wx_window, wx_event, handler, source=None, id=wx.ID_ANY, id2=wx.ID_ANY):
+    '''Initial Bind call.  Get the wx.App instance and verify it is a wxt.App
+       instance.
+    '''
     app = wx.App.Get()
     if not isinstance(app, App):
         raise RuntimeError('wx App must be a wxtrio.App object')
@@ -201,14 +211,14 @@ def AsyncBind(wx_event, async_callback, wx_window, source=None, id=wx.ID_ANY, id
     app = wx.App.Get()
     if not isinstance(app, App):
         raise RuntimeError('wx App must be a wxtrio.App object')
-    app.AsyncBind(wx_event, async_callback, wx_window, source=source, id=id, id2=id2)
+    app.AsyncBind(wx_event, async_callback, wx_window, source, id, id2)
 
 
-def StartCoroutine(coroutine, wx_window):
+def StartCoroutine(wx_window, coroutine):
     app = wx.App.Get()
     if not isinstance(app, App):
         raise RuntimeError('wx App must be a wxtrio.App object')
-    app.StartCoroutine(coroutine, wx_window)
+    app.StartCoroutine(wx_window, coroutine)
 
 
 async def AsyncShowDialog(dialog):
