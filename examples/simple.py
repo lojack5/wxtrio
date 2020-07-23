@@ -38,13 +38,13 @@ class TestFrame(wx.Frame):
         self.CenterOnScreen(wx.BOTH)
 
         # Events and long running tasks
-        wxt.AsyncBind(wx.EVT_BUTTON, self.OnButton, self.button)
-        wxt.StartCoroutine(self.update_clock, self)
+        self.Bind(wx.EVT_BUTTON, self.OnButton, self.button)
+        self.StartCoroutine(self.update_clock)
 
     async def OnButton(self, event):
         self.button.Disable()
         self.edit.SetLabel("Button clicked")
-        await wxt.sleep(1)
+        await wxt.sleep(1) # or trio.sleep(1) or anyio.sleep(1)
         self.edit.SetLabel("Working")
         await wxt.sleep(1)
         with wx.TextEntryDialog(self, 'Please enter something: ') as dialog:

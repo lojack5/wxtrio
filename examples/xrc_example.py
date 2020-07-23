@@ -33,7 +33,7 @@ class TestFrame(wx.Frame):
         xrc.XmlResource.Get().LoadFrame(self, parent, 'TestFrame')
         # Bind events, start long tasks
         xrc.XRCCTRL(self, 'button').Bind(wx.EVT_BUTTON, self.OnButton)
-        wxt.StartCoroutine(self.update_clock, self)
+        self.StartCoroutine(self.update_clock)
 
     async def update_clock(self):
         label = xrc.XRCCTRL(self, 'edit_timer')

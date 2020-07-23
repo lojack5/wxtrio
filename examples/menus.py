@@ -34,7 +34,7 @@ class TestFrame(wx.Frame):
         self.CenterOnScreen(wx.BOTH)
 
         # Events and long running tasks
-        wxt.StartCoroutine(self.update_clock, self)
+        self.StartCoroutine(self.update_clock)
         self.Bind(wx.EVT_MENU, lambda event: self.Close())
 
     async def update_clock(self):
