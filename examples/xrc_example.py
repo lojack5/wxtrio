@@ -57,6 +57,10 @@ class TestFrame(wx.Frame):
 
 
 def main():
+    # Ensure working dir is same a script location
+    import os, sys
+    pathname = os.path.dirname(sys.argv[0])
+    os.chdir(pathname)
     app = wxt.App()
     xrc.XmlResource.Get().Load('xrc_example.xrc')
     frame = TestFrame()
@@ -65,5 +69,5 @@ def main():
     app.MainLoop()
 
 
-if __name__=='__main__':
+if __name__ == '__main__':
     main()
