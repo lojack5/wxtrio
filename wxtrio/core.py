@@ -24,6 +24,12 @@ import attr
 from trio import sleep
 
 
+__all__ = [
+    'sleep',
+    'App', 'Bind', 'AsyncBind', 'StartCoroutine', 'AsyncShowDialog',
+]
+
+
 # Save original Bind method
 _BindSync = wx.Window.Bind
 
