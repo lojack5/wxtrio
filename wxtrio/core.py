@@ -65,14 +65,13 @@ class App(wx.App):
                wx.Window.StartCoroutine -> added method
         """
         if wx.Window.Bind == _BindSync:
-            def _bind(wx_window, wx_event_binder, handler, source=None, id=wx.ID_ANY, id2=wx.ID_ANY):
-                self.DynamicBind(wx_window, wx_event_binder, handler, source, id, id2)
-            wx.Window.Bind = _bind
-            def _start(wx_window, coroutine):
-                self.StartCoroutine(wx_window, coroutine)
-            wx.Window.StartCoroutine = _start
+            wx.Window.Bind = Bind
+        elif wx.Window.Bind == Bind:
+            # Already bound, should be ok
+            pass
         else:
-            raise Warning('Attempt to patch wx.Window.Bind multiple times.')
+            raise Warning('Unknown wx.Window.Bind method in place')
+        wx.Window.StartCoroutine = StartCoroutine
 
     def ExitMainLoop(self):
         """Called internally by wxPython to signal that the main application should exit."""
