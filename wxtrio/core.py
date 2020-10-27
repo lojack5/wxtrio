@@ -50,10 +50,9 @@ class WindowBindingData:
 
 
 class App(wx.App):
-    def __init__(self, *args, done_callback=None, **kwargs):
+    def __init__(self, *args, **kwargs):
         # TODO: implement non-guest mode option?
         self.nursery = None
-        self.done_callback = done_callback
         self.window_bindings = defaultdict(WindowBindingData)
         self.pending_tasks = []
         self._patch_window()
@@ -81,17 +80,18 @@ class App(wx.App):
     def OnInit(self):
         """Called by wxPython once it is in a state ready to begin the main loop."""
         # Start trio in guest mode
-        if self.done_callback:
-            done_callback = self.done_callback
-        else:
-            def done_callback(trio_outcome):
-                pass
         trio.lowlevel.start_guest_run(
             self._trio_main,
             run_sync_soon_threadsafe=wx.CallAfter,
-            done_callback=done_callback,
+            done_callback=self._trio_done_callback,
         )
         return True
+
+    def _trio_done_callback(self, trio_outcome):
+        # Make sure wxPython shuts down,
+        # As it may rely on some trio tasks that
+        # have stopped
+        wx.Exit()
 
     async def _trio_main(self):
         """Main async function to run under trio.  Simply creates
