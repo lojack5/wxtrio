@@ -15,6 +15,7 @@
 """
 import inspect
 from collections import defaultdict
+from functools import partial
 
 import wx
 import trio
@@ -30,8 +31,40 @@ __all__ = [
 ]
 
 
-# Save original Bind method
-_BindSync = wx.Window.Bind
+class MethodPatch:
+    __slots__ = ('getter', 'setter', 'original_method', 'installed_method', )
+
+    def __init__(self, cls, method_name, *, replacement_method=None):
+        self.getter = partial(getattr, cls, method_name, None)
+        self.setter = partial(setattr, cls, method_name)
+        self.original_method = self.getter()
+        self.installed_method = None
+        if replacement_method is not None:
+            self.install(replacement_method)
+
+    def install(self, replacement_method):
+        current_method = self.getter()
+        if current_method == self.original_method:
+            # Original method currently in place, good to patch
+            self.setter(replacement_method)
+            self.installed_method = replacement_method
+        elif current_method == self.installed_method:
+            # Already installed, good to go
+            pass
+        else:
+            raise Warning(f'Unknown replacement method for {self.original_method.__name__} in place, skipping install.')
+
+    def uninstall(self):
+        current_method = self.getter()
+        if current_method == self.installed_method:
+            self.setter(self.original_method)
+            self.installed_method = None
+        elif self.installed_method is not None:
+            raise Warning(f'Unknown replacement method for {self.original_method.__name__} in place, cannot uninstall.')
+
+    def __call__(self, *args, **kwargs):
+        """Call the original method."""
+        return self.original_method(*args, **kwargs)
 
 
 SPAWN_TIMEOUT = 1   # Timeout to wait for a nursery when spawning a child task
@@ -55,26 +88,23 @@ class App(wx.App):
         self.nursery = None
         self.window_bindings = defaultdict(WindowBindingData)
         self.pending_tasks = []
-        self._patch_window()
+        self._patch_window_methods()
         super().__init__(*args, **kwargs)
 
-    def _patch_window(self):
-        """Monkey patch wx.Window to have our desired version of methods.
-               wx.Window.Bind -> wxtrio.App.DynamicBind
-               wx.Window.StartCoroutine -> added method
-        """
-        if wx.Window.Bind == _BindSync:
-            wx.Window.Bind = Bind
-        elif wx.Window.Bind == Bind:
-            # Already bound, should be ok
-            pass
-        else:
-            raise Warning('Unknown wx.Window.Bind method in place')
-        wx.Window.StartCoroutine = StartCoroutine
+    def _patch_window_methods(self):
+        """Patch the wx.Window methods with our replacements."""
+        self._BindSync = MethodPatch(wx.Window, 'Bind', replacement_method=Bind)
+        self._StartCoroutinePatch = MethodPatch(wx.Window, 'StartCoroutine', replacement_method=StartCoroutine)
+
+    def _unpatch_window_methods(self):
+        """Uninstall replacement methods from wx.Window."""
+        self._BindSync.uninstall()
+        self._StartCoroutinePatch.uninstall()
 
     def ExitMainLoop(self):
         """Called internally by wxPython to signal that the main application should exit."""
         self.nursery.cancel_scope.cancel()
+        self._unpatch_window_methods()
         super().ExitMainLoop()
 
     def OnInit(self):
@@ -120,7 +150,7 @@ class App(wx.App):
             # 'async def' function that has not been called
             self._queue_cleanup(wx_window)
             self.window_bindings[wx_window].event_handlers[wx_event_binder.typeId].append(handler)
-            _BindSync(wx_window, wx_event_binder, lambda event: self.OnEvent(event, wx_window, wx_event_binder.typeId), source=source, id=id, id2=id2)
+            self._BindSync(wx_window, wx_event_binder, lambda event: self.OnEvent(event, wx_window, wx_event_binder.typeId), source=source, id=id, id2=id2)
         elif inspect.iscoroutine(handler):
             # 'async def' function that has been called and returned an awaitable object
             raise TypeError('Event handler is an awaitable object returned from an async function.  Do not call the async function.')
@@ -131,7 +161,7 @@ class App(wx.App):
             raise TypeError('Event handler is not callable.')
         else:
             # Sync event handler
-            _BindSync(wx_window, wx_event_binder, handler, source=source, id=id, id2=id2)
+            self._BindSync(wx_window, wx_event_binder, handler, source=source, id=id, id2=id2)
 
     def AsyncBind(self, wx_event_binder, async_handler, wx_window, source=None, id=wx.ID_ANY, id2=wx.ID_ANY):
         """Bind a coroutine as a wx Event callback on the given wx_window.
@@ -147,7 +177,7 @@ class App(wx.App):
             raise TypeError('async_handler must be a async function or coroutine.')
         self._queue_cleanup(wx_window)
         self.window_bindings[wx_window].event_handlers[wx_event_binder.typeId].append(async_handler)
-        _BindSync(wx_window, wx_event_binder, lambda event: self.OnEvent(event, wx_window, wx_event_binder.typeId), source=source, id=id, id2=id2)
+        self._BindSync(wx_window, wx_event_binder, lambda event: self.OnEvent(event, wx_window, wx_event_binder.typeId), source=source, id=id, id2=id2)
 
     def _queue_cleanup(self, wx_window):
         """By 'cleanup' we mean: establish a nursery for this window that can then be
@@ -169,7 +199,7 @@ class App(wx.App):
         async with trio.open_nursery() as nursery:
             bindings = self.window_bindings[wx_window]
             bindings.nursery = nursery
-            _BindSync(wx_window, wx.EVT_WINDOW_DESTROY, lambda event: self.OnDestroy(event, wx_window), wx_window)
+            self._BindSync(wx_window, wx.EVT_WINDOW_DESTROY, lambda event: self.OnDestroy(event, wx_window), wx_window)
             await trio.sleep_forever()
         # We reach here when the nursery has been cancelled, ie: when OnDestroy is
         # triggered for this window.
