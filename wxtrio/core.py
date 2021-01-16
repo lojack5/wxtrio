@@ -95,11 +95,13 @@ class App(wx.App):
         """Patch the wx.Window methods with our replacements."""
         self._BindSync = MethodPatch(wx.Window, 'Bind', replacement_method=Bind)
         self._StartCoroutinePatch = MethodPatch(wx.Window, 'StartCoroutine', replacement_method=StartCoroutine)
+        self._CancelCoroutinePatch = MethodPatch(wx.Window, 'CancelCoroutines', replacement_method=self.CancelCoroutines)
 
     def _unpatch_window_methods(self):
         """Uninstall replacement methods from wx.Window."""
         self._BindSync.uninstall()
         self._StartCoroutinePatch.uninstall()
+        self._CancelCoroutinePatch.uninstall()
 
     def ExitMainLoop(self):
         """Called internally by wxPython to signal that the main application should exit."""
@@ -217,8 +219,11 @@ class App(wx.App):
         self.window_bindings[wx_window].nursery.start_soon(coroutine)
 
 
-    def StartCoroutine(self, wx_window, coroutine):
-        """Start a coroutine, and attach its lifetime to the wx_window."""
+    def StartCoroutine(self, wx_window, coroutine, bind_onclose=True):
+        """Start a coroutine, and attach its lifetime to the `wx_window`.
+           If `bind_onclose`, then also bind a custom OnClose event handler
+           to cancel all associated coroutines.
+        """
         self._queue_cleanup(wx_window)
         if self.nursery is None:
             # No nursery yet, stash this task for later
@@ -226,6 +231,8 @@ class App(wx.App):
         else:
             # Spawn it
             self.nursery.start_soon(self._spawn_into, wx_window, coroutine)
+        if bind_onclose:
+            self._BindSync(wx_window, wx.EVT_CLOSE, lambda event: self.OnDestroy(event, wx_window), wx_window)
 
     def OnEvent(self, wx_event, wx_window, wx_event_id):
         """An event occurred for something we've bound to an async event
@@ -239,9 +246,13 @@ class App(wx.App):
         """Clean up any running tasks associated with the window
            that is being destroyed.
         """
+        self.CancelCoroutines(wx_window)
+        wx_event.Skip()
+
+    def CancelCoroutines(self, wx_window):
+        """Cancel all trio coroutines associated with a window."""
         if wx_window in self.window_bindings:
             self.window_bindings[wx_window].nursery.cancel_scope.cancel()
-        wx_event.Skip()
 
 
 def Bind(wx_window, wx_event, handler, source=None, id=wx.ID_ANY, id2=wx.ID_ANY):
@@ -261,11 +272,15 @@ def AsyncBind(wx_event, async_callback, wx_window, source=None, id=wx.ID_ANY, id
     app.AsyncBind(wx_event, async_callback, wx_window, source, id, id2)
 
 
-def StartCoroutine(wx_window, coroutine):
+def StartCoroutine(wx_window, coroutine, bind_onclose=True):
+    """Start a coroutine opened by `wx_window`.  If `bind_onclose`
+       then also binds a custom OnClose event handler to the window
+       which will cancel all coroutines.
+    """
     app = wx.App.Get()
     if not isinstance(app, App):
         raise RuntimeError('wx App must be a wxtrio.App object')
-    app.StartCoroutine(wx_window, coroutine)
+    app.StartCoroutine(wx_window, coroutine, bind_onclose)
 
 
 async def AsyncShowDialog(dialog):
