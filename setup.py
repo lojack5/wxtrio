@@ -11,7 +11,7 @@ with open('requirements.txt') as ins:
 
 setup(
     name='wxtrio',
-    version=0.1,
+    version=0.2,
     description='Async wxPython with trio.',
     long_description=LONG_DESC,
     author='Jacob Lojewski',
