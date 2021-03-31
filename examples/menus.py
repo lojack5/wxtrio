@@ -1,5 +1,6 @@
 """Another simple wxtrio example.  This one showcases the effect
-   of navigating menus on cooperative multitasking
+   of navigating menus on cooperative multitasking: with a menu open and the
+   mouse outside of the window frame, trio tasks do not run.
 """
 import time
 

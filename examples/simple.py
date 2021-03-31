@@ -1,11 +1,6 @@
 """Very simply wxPython application, using wxtrio.  Features a static
    text control with the current time, demonstrating the coroutine running
    while other GUI and processing async functions are running.
-
-   This also illustrates one limitation of this approach, click to resize
-   the window and drag, but don't release.  Or, click to move the window
-   and drag, but again don't release.  The GUI task holds control of the
-   thread, preventing any other tasks from executing.
 """
 import time
 
