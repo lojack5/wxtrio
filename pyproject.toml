@@ -1,0 +1,50 @@
+[build-system]
+requires = ['setuptools>='61.0']
+build-backend = ['setuptools.build_meta']
+
+[tool.setuptools]
+package-dir = {'wxtrio': 'wxtrio'}
+
+[tool.setuptools.dynamic]
+version = {attr = 'wxtrio.__version__'}
+
+[project]
+name = 'wxtrio'
+dynamic = ['version']
+authors = [
+    { name = 'lojack5' },
+]
+description = 'Async wxPtyon with trio.'
+readme = 'README.md'
+license = { text = 'BSD 3-Clause' }
+requires-python = '>=3.11'
+keywords = ['wxPython', 'trio', 'async', 'GUI']
+dependencies = [
+    'wxPython>=4.2.0',
+    'trio>=0.22.0',
+]
+classifiers = [
+    'Intended Audience :: Developers',
+    'License :: OSI Approved :: BSD License',
+    'Programming Language :: Python :: 3 :: Only',
+    'Programming Language :: Python :: 3.11',
+    'Framework :: Trio',
+]
+
+[project.urls]
+homepage='https://github.com/lojack5/wxtrio'
+
+[tool.black]
+skip-string-normalization = true
+
+[tool.flake8]
+max-line-length = 88
+extend-ignore = ['E203']
+per-file-ignores = [
+    # F401: Imported but unused
+    # F403: Star import used
+    '__init__.py: F403, F401',
+]
+
+[tool.isort]
+profile = 'black'
