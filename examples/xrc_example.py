@@ -5,59 +5,44 @@
 import time
 
 import wx
-from wx import xrc
 import wxtrio as wxt
+from wxtrio import StartCoroutine, Bind
+
+from utils import XRCCtrl, XRCFrame, XRCApp, disable
 
 
-class disable:
-    """Temporarily disable a wxWidget."""
-    def __init__(self, window):
-        self._window = window
+class TestFrame(XRCFrame):
+    label: wx.StaticText = XRCCtrl('edit_timer')
+    edit: wx.StaticText = XRCCtrl()
+    button: wx.Button = XRCCtrl()
 
-    def __enter__(self):
-        self._window.Disable()
-
-    def __exit__(self, *args, **kwargs):
-        self._window.Enable()
-
-
-class TestFrame(wx.Frame):
-    def __init__(self, parent=None):
-        # initialize via XRC
-        super(TestFrame, self).__init__()
-        xrc.XmlResource.Get().LoadFrame(self, parent, 'TestFrame')
+    def __init__(self, parent: wx.Window | None = None):
+        super().__init__(parent)
         # Bind events, start long tasks
-        xrc.XRCCTRL(self, 'button').Bind(wx.EVT_BUTTON, self.OnButton)
-        self.StartCoroutine(self.update_clock)
+        Bind(self.button, wx.EVT_BUTTON, self.OnButton)
+        StartCoroutine(self, self.update_clock)
 
-    async def update_clock(self):
-        label = xrc.XRCCTRL(self, 'edit_timer')
+    async def update_clock(self) -> None:
         while True:
-            label.SetLabel(time.strftime('%H:%M:%S'))
+            self.label.Label = time.strftime('%H:%M:%S')
             await wxt.sleep(0.5)
 
-    async def OnButton(self, event):
+    async def OnButton(self, event: wx.Event) -> None:
         # Show a text entry dialog after 2 seconds, update
         # a text control with status
-        edit = xrc.XRCCTRL(self, 'edit')
-        with disable(xrc.XRCCTRL(self, 'button')):
-            edit.SetLabel("Button clicked")
+        with disable(self.button):
+            self.edit.Label = 'Button clicked'
             await wxt.sleep(1)
-            edit.SetLabel("Working")
+            self.edit.Label = 'Working'
             await wxt.sleep(1)
-            with wx.TextEntryDialog(self, 'Please enter something: ') as dialog:
-                result = await wxt.AsyncShowDialog(dialog)
-                result = '%s - %s' % (result, dialog.GetValue())
-            edit.SetLabel('Result: %s' % result)
+            dialog = wx.TextEntryDialog(self, 'Please enter something:')
+            result = await wxt.AsyncShowDialog(dialog)
+            result = f'{result} - {dialog.GetValue()}'
+            self.edit.Label = f'Result: {result}'
 
 
 def main():
-    # Ensure working dir is same a script location
-    import os, sys
-    pathname = os.path.dirname(sys.argv[0])
-    os.chdir(pathname)
-    app = wxt.App()
-    xrc.XmlResource.Get().Load('xrc_example.xrc')
+    app = XRCApp(xrc_file='xrc_example.xrc')
     frame = TestFrame()
     frame.Show()
     app.SetTopWindow(frame)

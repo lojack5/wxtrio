@@ -3,13 +3,15 @@
    mouse outside of the window frame, trio tasks do not run.
 """
 import time
+from typing import NoReturn
 
 import wx
 import wxtrio as wxt
+from wxtrio import StartCoroutine, Bind
 
 class TestFrame(wx.Frame):
-    def __init__(self, parent=None):
-        super(TestFrame, self).__init__(parent)
+    def __init__(self, parent: wx.Window | None = None):
+        super().__init__(parent)
 
         # Widgets
         panel = wx.Panel(self)
@@ -18,7 +20,7 @@ class TestFrame(wx.Frame):
         # Menu, statusbar
         menubar = wx.MenuBar()
         file_menu = wx.Menu()
-        file_quit = file_menu.Append(wx.ID_EXIT, 'E&xit', 'Quit application')
+        file_menu.Append(wx.ID_EXIT, 'E&xit', 'Quit application')
         menubar.Append(file_menu, '&File')
         self.SetMenuBar(menubar)
         self.CreateStatusBar()
@@ -35,12 +37,12 @@ class TestFrame(wx.Frame):
         self.CenterOnScreen(wx.BOTH)
 
         # Events and long running tasks
-        self.StartCoroutine(self.update_clock)
-        self.Bind(wx.EVT_MENU, lambda event: self.Close())
+        StartCoroutine(self, self.update_clock)
+        Bind(self, wx.EVT_MENU, lambda event: self.Close())
 
-    async def update_clock(self):
+    async def update_clock(self) -> NoReturn:
         while True:
-            self.edit_timer.SetLabel(time.strftime('%H:%M:%S'))
+            self.edit_timer.Label = time.strftime('%H:%M:%S')
             await wxt.sleep(0.5)
 
 

@@ -3,18 +3,22 @@
    while other GUI and processing async functions are running.
 """
 import time
+from typing import NoReturn
 
 import wx
 import wxtrio as wxt
+from wxtrio import StartCoroutine, Bind
+
+from utils import disable
 
 
 class TestFrame(wx.Frame):
-    def __init__(self, parent=None):
-        super(TestFrame, self).__init__(parent)
+    def __init__(self, parent: wx.Window | None = None) -> None:
+        super().__init__(parent)
 
         # Widgets
         panel = wx.Panel(self)
-        self.button =  wx.Button(panel, label="Submit")
+        self.button =  wx.Button(panel, label='Submit')
         self.edit =  wx.StaticText(panel, style=wx.ALIGN_CENTRE_HORIZONTAL|wx.ST_NO_AUTORESIZE)
         self.edit_timer =  wx.StaticText(panel, style=wx.ALIGN_CENTRE_HORIZONTAL|wx.ST_NO_AUTORESIZE)
 
@@ -33,22 +37,21 @@ class TestFrame(wx.Frame):
         self.CenterOnScreen(wx.BOTH)
 
         # Events and long running tasks
-        self.Bind(wx.EVT_BUTTON, self.OnButton, self.button)
-        self.StartCoroutine(self.update_clock)
+        Bind(self, wx.EVT_BUTTON, self.OnButton, self.button)
+        StartCoroutine(self, self.update_clock)
 
-    async def OnButton(self, event):
-        self.button.Disable()
-        self.edit.SetLabel("Button clicked")
-        await wxt.sleep(1) # or trio.sleep(1) or anyio.sleep(1)
-        self.edit.SetLabel("Working")
-        await wxt.sleep(1)
-        with wx.TextEntryDialog(self, 'Please enter something: ') as dialog:
+    async def OnButton(self, event: wx.Event) -> None:
+        with disable(self.button):
+            self.edit.Label = 'Button clicked'
+            await wxt.sleep(1) # or trio.sleep(1) or anyio.sleep(1)
+            self.edit.Label = 'Working'
+            await wxt.sleep(1)
+            dialog = wx.TextEntryDialog(self, 'Please enter something: ')
             result = await wxt.AsyncShowDialog(dialog)
-            result = '%s - %s' % (result, dialog.GetValue())
-        self.edit.SetLabel('Result: %s' % result)
-        self.button.Enable()
+            result = f'{result} - {dialog.GetValue()}'
+            self.edit.Label = f'Result: {result}'
 
-    async def update_clock(self):
+    async def update_clock(self) -> NoReturn:
         while True:
             self.edit_timer.SetLabel(time.strftime('%H:%M:%S'))
             await wxt.sleep(0.5)
