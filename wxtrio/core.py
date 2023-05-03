@@ -18,7 +18,7 @@
 import inspect
 import warnings
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import partial
 from typing import (
     Any,
@@ -121,10 +121,7 @@ SPAWN_TIMEOUT = 1  # Timeout to wait for a nursery when spawning a child task
 
 
 @dataclass(slots=True)
-class WindowBindingData:
-    event_handlers: defaultdict[int, list] = field(
-        default_factory=lambda: defaultdict(list)
-    )  # List of event handlers this window is async subscribed to
+class EvtHandlerNursery:
     nursery: trio.Nursery | None = (
         None  # nursury for launching tasks/event handler instances for this window
     )
@@ -143,7 +140,7 @@ class App(wx.App):
     def __init__(self, *args, **kwargs) -> None:
         # TODO: implement non-guest mode option?
         self.nursery: trio.Nursery | None = None
-        self.handler_bindings = defaultdict(WindowBindingData)
+        self.handler_nurseries = defaultdict(EvtHandlerNursery)
         self.pending_tasks: list = []
         self._patch_evthandler_methods()
         super().__init__(*args, **kwargs)
@@ -187,7 +184,7 @@ class App(wx.App):
         # Make sure wxPython shuts down,
         # As it may rely on some trio tasks that
         # have stopped
-        str(trio_outcome)  # unwrap any exceptions
+        trio_outcome.unwrap()
         wx.Exit()
 
     async def _trio_main(self) -> None:
@@ -200,7 +197,7 @@ class App(wx.App):
             # 1) Create the main trio nursery
             self.nursery = nursery
             # 2) Create nurseries for each window for long running tasks
-            for evthandler in self.handler_bindings:
+            for evthandler in self.handler_nurseries:
                 self.nursery.start_soon(self._build_nursery, evthandler)
             # 3) Start any pending tasks
             for evthandler, coroutine in self.pending_tasks:
@@ -223,19 +220,7 @@ class App(wx.App):
         handler is async or sync, and bind appropriately.
         """
         if inspect.iscoroutinefunction(handler):
-            # 'async def' function that has not been called
-            self._queue_cleanup(evthandler)
-            self.handler_bindings[evthandler].event_handlers[
-                event_binder.typeId
-            ].append(handler)
-            self._BindSync(
-                evthandler,
-                event_binder,
-                lambda event: self.OnEvent(event, evthandler, event_binder.typeId),
-                source=source,
-                id=id,
-                id2=id2,
-            )
+            self.AsyncBind(evthandler, event_binder, handler, source, id, id2)
         elif inspect.iscoroutine(handler):
             # 'async def' function that has been called and returned an awaitable object
             raise TypeError(
@@ -259,9 +244,9 @@ class App(wx.App):
 
     def AsyncBind(
         self,
+        evthandler: wx.EvtHandler,
         event_binder: wx.PyEventBinder,
         handler: AsyncHandler,
-        evthandler: wx.EvtHandler,
         source=None,
         id: int = wx.ID_ANY,
         id2: int = wx.ID_ANY,
@@ -280,13 +265,10 @@ class App(wx.App):
         if not inspect.iscoroutinefunction(handler):
             raise TypeError('async_handler must be a async function or coroutine.')
         self._queue_cleanup(evthandler)
-        self.handler_bindings[evthandler].event_handlers[event_binder.typeId].append(
-            handler
-        )
         self._BindSync(
             evthandler,
             event_binder,
-            lambda event: self.OnEvent(event, evthandler, event_binder.typeId),
+            lambda event: self.OnEvent(evthandler, handler, event),
             source=source,
             id=id,
             id2=id2,
@@ -297,31 +279,31 @@ class App(wx.App):
         be cancelled when the evthandler gets destroyed, cleaning up any associated
         tasks.
         """
-        bindings = self.handler_bindings[evthandler]
+        handler_nursery = self.handler_nurseries[evthandler]
         # If a nursery does not yet exist for this event handler:
         #  - If there is a main nursery, launch a task to create a sub-nursery for our
         #    event handler
         #  - If not, wait until the main loops starts, nurseries will be created then
         if (
             self.nursery is not None
-            and bindings.nursery is None
-            and not bindings.nursery_queued
+            and handler_nursery.nursery is None
+            and not handler_nursery.nursery_queued
         ):
-            bindings.nursery_queued = True
+            handler_nursery.nursery_queued = True
             self.nursery.start_soon(self._build_nursery, evthandler)
 
     async def _build_nursery(self, evthandler: wx.EvtHandler) -> None:
         """Create a nursery for managing tasks associated with the wx EvtHandler
         object.
         """
-        if self.handler_bindings[evthandler].nursery is not None:
+        if self.handler_nurseries[evthandler].nursery is not None:
             # Trying to create a nursery twice is a code smell
             warnings.warn(
                 f'Attempted to create nursery for {evthandler} multiple times.'
             )
         async with trio.open_nursery() as nursery:
-            bindings = self.handler_bindings[evthandler]
-            bindings.nursery = nursery
+            handler_nursery = self.handler_nurseries[evthandler]
+            handler_nursery.nursery = nursery
             # TODO: EVT_WINDOW_DESTROY might not be triggered for non-window EvtHandler
             # objects, monkey patch Destroy instead?
             self._BindSync(
@@ -333,7 +315,7 @@ class App(wx.App):
             await trio.sleep_forever()
         # We reach here when the nursery has been cancelled, ie: when OnDestroy is
         # triggered for this EvtHandler.
-        del self.handler_bindings[evthandler]
+        del self.handler_nurseries[evthandler]
 
     async def _spawn_into(
         self, evthandler: wx.EvtHandler, coroutine: AsyncMethod
@@ -343,7 +325,7 @@ class App(wx.App):
             # The wx EvtHandler's nursery may not be set up fully yet,
             # _build_nursery was queued in trio, but might not have begun to run,
             # so wait up to 10 seconds.
-            nursery = await self.handler_bindings[evthandler].wait_nursery()
+            nursery = await self.handler_nurseries[evthandler].wait_nursery()
         if cancel_scope.cancelled_caught:
             raise RuntimeError(f'Failed to nursery for {evthandler}, timed out.')
         nursery.start_soon(coroutine)
@@ -373,14 +355,11 @@ class App(wx.App):
                 evthandler,
             )
 
-    def OnEvent(
-        self, event: wx.Event, evthandler: wx.EvtHandler, event_id: int
-    ) -> None:
+    def OnEvent(self, evthandler: wx.EvtHandler, handler, event: wx.Event) -> None:
         """An event occurred for something we've bound to an async event handler."""
-        bindings = self.handler_bindings[evthandler]
-        for async_handler in bindings.event_handlers[event_id]:
-            # if this even handler is bound already, the nurser is in fact created
-            bindings.nursery.start_soon(async_handler, event.Clone())  # type: ignore
+        bindings = self.handler_nurseries[evthandler]
+        if bindings.nursery:
+            bindings.nursery.start_soon(handler, event.Clone())
 
     def OnDestroy(self, event: wx.Event, evthandler: wx.EvtHandler) -> None:
         """Clean up any running tasks associated with the EvtHandler that is being
@@ -391,8 +370,8 @@ class App(wx.App):
 
     def CancelCoroutines(self, evthandler: wx.EvtHandler) -> None:
         """Cancel all trio coroutines associated with an EvtHandler."""
-        if evthandler in self.handler_bindings:
-            if nursery := self.handler_bindings[evthandler].nursery:
+        if evthandler in self.handler_nurseries:
+            if nursery := self.handler_nurseries[evthandler].nursery:
                 nursery.cancel_scope.cancel()
 
 
@@ -426,7 +405,7 @@ def AsyncBind(
     id: int = wx.ID_ANY,
     id2: int = wx.ID_ANY,
 ) -> None:
-    get_app().AsyncBind(event, handler, evthandler, source, id, id2)
+    get_app().AsyncBind(evthandler, event, handler, source, id, id2)
 
 
 def StartCoroutine(
