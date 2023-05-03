@@ -8,20 +8,21 @@ __all__ = [
     'disable',
 ]
 
+import contextlib
 import os
 import sys
-import contextlib
 from functools import cached_property
 from typing import Any
 
 import wx
-import wxtrio as wxt
 from wx import xrc
+
+import wxtrio as wxt
 
 
 # Some XRC helpers
 class _xrc_property(cached_property):
-    __slots__ = ('__name', )
+    __slots__ = ('__name',)
 
     def __init__(self):
         super().__init__(lambda instance: xrc.XRCCTRL(instance, self.__name))
@@ -51,6 +52,7 @@ class XRCApp(wxt.App):
         with contextlib.chdir(pathname):
             _XRC().Load(xrc_file)
 
+
 class XRCFrame(wx.Frame):
     """wx.Frame that handles initialization from XRC."""
 
@@ -58,7 +60,9 @@ class XRCFrame(wx.Frame):
         if not xrc_name:
             xrc_name = type(self).__name__
         super().__init__()
-        _XRC().LoadFrame(self, parent, xrc_name)
+        # pyi files for wx say LoadFrame requires parent is wx.Window,
+        # but it actually accepts a None, so type: ignore
+        _XRC().LoadFrame(self, parent, xrc_name)  # type: ignore
 
 
 def _XRC() -> xrc.XmlResource:
@@ -69,7 +73,8 @@ def _XRC() -> xrc.XmlResource:
 # other helpers
 @contextlib.contextmanager
 def disable(window: wx.Window):
-    """Temporarily disable a wx widget, returning it to its original state afterwards.
+    """Temporarily disable a wx widget, returning it to its original state
+    afterwards.
     """
     state = window.Enabled
     window.Enabled = False

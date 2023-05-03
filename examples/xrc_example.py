@@ -5,10 +5,10 @@
 import time
 
 import wx
-import wxtrio as wxt
-from wxtrio import StartCoroutine, Bind
+from utils import XRCApp, XRCCtrl, XRCFrame, disable
 
-from utils import XRCCtrl, XRCFrame, XRCApp, disable
+import wxtrio as wxt
+from wxtrio import Bind, StartCoroutine
 
 
 class TestFrame(XRCFrame):

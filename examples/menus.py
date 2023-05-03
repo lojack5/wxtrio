@@ -6,8 +6,10 @@ import time
 from typing import NoReturn
 
 import wx
+
 import wxtrio as wxt
-from wxtrio import StartCoroutine, Bind
+from wxtrio import Bind, StartCoroutine
+
 
 class TestFrame(wx.Frame):
     def __init__(self, parent: wx.Window | None = None):
@@ -15,7 +17,9 @@ class TestFrame(wx.Frame):
 
         # Widgets
         panel = wx.Panel(self)
-        self.edit_timer =  wx.StaticText(panel, style=wx.ALIGN_CENTRE_HORIZONTAL|wx.ST_NO_AUTORESIZE)
+        self.edit_timer = wx.StaticText(
+            panel, style=wx.ALIGN_CENTRE_HORIZONTAL | wx.ST_NO_AUTORESIZE
+        )
 
         # Menu, statusbar
         menubar = wx.MenuBar()
@@ -27,7 +31,7 @@ class TestFrame(wx.Frame):
 
         # Layout
         vbox = wx.BoxSizer(wx.VERTICAL)
-        vbox.Add(self.edit_timer, 1, wx.EXPAND|wx.ALL, 5)
+        vbox.Add(self.edit_timer, 1, wx.EXPAND | wx.ALL, 5)
         panel.SetSizer(vbox)
         panel.Layout()
 
@@ -54,5 +58,5 @@ def main():
     app.MainLoop()
 
 
-if __name__=='__main__':
+if __name__ == '__main__':
     main()
